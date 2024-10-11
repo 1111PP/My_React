@@ -154,7 +154,7 @@ function createDom(fiber) {
 
   return dom
 }
-
+// /123123123
 function handleChildren(dom, children) {
   if (Array.isArray(children)) {
     children.forEach((child) => {
