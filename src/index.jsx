@@ -73,7 +73,15 @@ function commitRoot() {
 // 💡每个节点的挂载操作需要涉及到: parent > (child + sibling) > child.child ,所以始终应该处于中间的child开始挂载工作,类似链表
 function commitWork(fiber) {
   if (!fiber) return
-  const parentDOM = fiber.parent.dom
+
+  // 获取当前纤维节点的parent
+  let parentDomFiber = fiber.parent
+  // 沿着fiber树向上寻找，直到找到具有 DOM 节点的 fiber
+  while (!parentDomFiber.dom) {
+    parentDomFiber = parentDomFiber.parent
+  }
+  // 将具有DOM节点的fiber 赋值给 负责被挂载的parentDOM容器上
+  const parentDOM = parentDomFiber.dom
   const { effectTag, dom, props, alternate } = fiber
   // 1.初次挂载 / 新增
   if (effectTag === 'PLACEMENT' && dom !== null) {
@@ -81,7 +89,7 @@ function commitWork(fiber) {
   }
   // 2.删除
   else if (effectTag === 'DELETION') {
-    parentDOM.removeChild(fiber.dom)
+    commitDeletion(fiber.dom, parentDOM)
   }
   // 3.复用，只需更新props
   else if (effectTag === 'UPDATE' && dom !== null) {
@@ -91,7 +99,13 @@ function commitWork(fiber) {
   commitWork(fiber.child)
   commitWork(fiber.sibling)
 }
-
+function commitDeletion(fiber, domParent) {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom)
+  } else {
+    commitDeletion(fiber.child, domParent)
+  }
+}
 /**
  * 指定下一轮细分的任务，初始任务单元为 #root 根容器
  * @param {vnode} element
@@ -210,13 +224,32 @@ function reconcileChildren(wipFiber, elements) {
  * @returns 下一次处理的任务单元
  */
 function performUnitOfWork(fiber) {
-  // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
-  if (!fiber.dom) fiber.dom = createDom(fiber)
+  // 函数组件： 渲染 + 纤维化
+  const updateFunctionComponent = (fiber) => {
+    // 运行函数组件，获取当前函数组件 return 的 children
+    const children = [fiber.type(fiber.props)]
 
-  const elements = fiber.props.children
+    // 单独处理纤维化的工作
+    reconcileChildren(fiber, children)
+  }
 
-  // 单独处理纤维化的工作
-  reconcileChildren(fiber, elements)
+  // 普通元素： 渲染 + 纤维化
+  const updateHostComponent = (fiber) => {
+    // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
+    if (!fiber.dom) fiber.dom = createDom(fiber)
+
+    // 单独处理纤维化的工作
+    reconcileChildren(fiber, fiber.props.children)
+  }
+
+  // 对当前 fiber 渲染+纤维化 操作
+  const isFunctionComponent = fiber.type instanceof Function
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber)
+  } else {
+    // TODO add dom node 渲染当前fiber
+    updateHostComponent(fiber)
+  }
 
   // 最后我们寻找下一个工作单元。
   // 下一个任务单元查找规则：🟥子  => 兄 => 叔(父的兄) => 父的父的兄 => ....  => 父的父的....父的兄 / root (逐层往上查找祖先的兄，最终查找到 祖先的兄 或 root ，若到达了root表示渲染结束)
@@ -319,38 +352,12 @@ let MyReact = {
   handleAttributes,
   handleStyle,
 }
-
 // babel会使用我们自定义的createElement编译这段jsx代码,转化为Vnode对象
-/** @jsx MyReact.createElement */
-const element = (
-  <div
-    className="box"
-    style={{ border: '2px solid black' }}
-  >
-    外层 div 标签
-    <div
-      className="child1"
-      style={{ border: '2px dashed black' }}
-    >
-      第一层children1
-      {/* <div
-        className="child1-1"
-        style={{ color: 'red', fontWeight: '700', border: '1px solid red' }}
-      >
-        第二层children1
-      </div>
-    </div>
-    <div className="child2">
-      第一层children2
-      <div
-        className="child2-2"
-        style={{ color: 'green', border: '1px solid green' }}
-      >
-        第二层children2
-      </div> */}
-    </div>
-  </div>
-)
+/**@jsx MyReact.createElement */
+function App(props) {
+  return <h1>Hi {props.name}</h1>
+}
+const element = <App name="foo" />
 
 const container = document.getElementById('root')
 // 渲染的开始 ,实际上是创建第一个细分任务
@@ -359,3 +366,35 @@ MyReact.render(element, container)
 requestIdleCallback(workLoop)
 
 // console.log(nextUnitOfWork)
+
+// babel会使用我们自定义的createElement编译这段jsx代码,转化为Vnode对象
+/** @jsx MyReact.createElement */
+// const element = (
+//   <div
+//     className="box"
+//     style={{ border: '2px solid black' }}
+//   >
+//     外层 div 标签
+//     <div
+//       className="child1"
+//       style={{ border: '2px dashed black' }}
+//     >
+//       第一层children1
+//       <div
+//         className="child1-1"
+//         style={{ color: 'red', fontWeight: '700', border: '1px solid red' }}
+//       >
+//         第二层children1
+//       </div>
+//     </div>
+//     <div className="child2">
+//       第一层children2
+//       <div
+//         className="child2-2"
+//         style={{ color: 'green', border: '1px solid green' }}
+//       >
+//         第二层children2
+//       </div>
+//     </div>
+//   </div>
+// )
