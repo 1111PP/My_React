@@ -1,15 +1,70 @@
 //当前要处理的工作单元（任务）
 let nextUnitOfWork = null
-//保存纤维树的根,类似链表保存Head节点
+//保存新纤维树的根,类似链表保存Head节点
 let wipRoot = null
-//保存旧纤维树，用于新旧纤维树对比 -> 更新
+//保存旧纤维树的根，用于新旧纤维树对比 -> 更新
 //  💡PS:保存根容器root的fiber,实际就可以通过child、parnet、sibling操作所有fiber
 let currRoot = null
+let deletions = null
 
+// 排除的属性
+//    1.children属性，他们为子元素，单独处理
+//    2.event 事件处理，以on开头的属性
+const exceptProperty = (key) => key !== 'children' && !isEvent(key)
+// 是否为 新/更改 的属性
+const isNew = (prev, next) => (key) => prev[key] !== next[key]
+// ❗属性 key 同时存在与 prev 和 next 时 返回 false
+const isDiff = (prev, next) => (key) => !(key in next)
+const isEvent = (key) => key.startWith('on')
+
+/**
+ * 更新当前节点的属性，包含arrtiubte、children
+ * @param {HTMLElement} dom
+ * @param {*} oldProps
+ * @param {*} newProps
+ */
+function updateDom(dom, oldProps, newProps) {
+  // -------------------------------事件属性-------------------------------
+
+  // 为dom删除事件
+  // 如果事件处理程序发生更改，我们会将其从节点中删除。
+  Object.keys(oldProps)
+    .filter(isEvent)
+    .filter((key) => !(key in newProps) || isNew(oldProps, newProps)(key)) // 🟥拿到新旧Props中 事件名不同 || 事件名相同但处理回调函数不同的事件
+    .forEach((name) => {
+      // 移除这些废弃的事件
+      const eventName = name.toLowerCase().substring(2)
+      dom.removeEventListener(eventName, oldProps[name])
+    })
+  // 为dom新增事件
+  Object.keys(newProps)
+    .filter(isEvent)
+    .filter(isNew(oldProps, newProps)) //筛选出：newProps的 事件数组 中存在但oldProps中没有的事件名   💡例： newProps EventArr:['onA','onB'] oldProps EventArr:['onA','onC']  => ['onB']
+    .forEach((name) => {
+      // 新增的事件
+      const eventName = name.toLowerCase().substring(2)
+      dom.addEventListener(eventName, oldProps[name])
+    })
+  // -------------------------------普通属性-------------------------------
+  // 为 Dom 删除（置空） oldProps 与 newProps 中的不同属性
+  Object.keys(oldProps)
+    .filter(exceptProperty)
+    .filter(isDiff(oldProps, newProps)) //过滤：newProps与oldProps中同时存在的属性，保留其差异的key   💡例：newProps:{a:1,b:2}  oldProps:{a:1}  => ['b']
+    .forEach((key) => (dom[key] = ''))
+
+  // 为 Dom 设置 新的 / 更改 的属性
+  Object.keys(newProps)
+    .filter(exceptProperty)
+    .filter(isNew(oldProps, newProps)) // 过滤 新增 / 修改 过的属性
+    .forEach((key) => (dom[key] = newProps[key]))
+}
 // 在 vnode纤维化完成后 执行此操作。这里递归地将所有节点追加到 dom 中。
 function commitRoot() {
   console.log('🈯fiber树', wipRoot)
-  // 从child开始处理
+
+  // 批量删除节点
+  deletions.forEach(commitWork)
+  // 从Fiber树中根容器#root的child开始处理
   commitWork(wipRoot.child)
   currRoot = wipRoot
   wipRoot = null
@@ -19,7 +74,20 @@ function commitRoot() {
 function commitWork(fiber) {
   if (!fiber) return
   const parentDOM = fiber.parent.dom
-  parentDOM.appendChild(fiber.dom)
+  const { effectTag, dom, props, alternate } = fiber
+  // 1.初次挂载 / 新增
+  if (effectTag === 'PLACEMENT' && dom !== null) {
+    parentDOM.appendChild(fiber.dom)
+  }
+  // 2.删除
+  else if (effectTag === 'DELETION') {
+    parentDOM.removeChild(fiber.dom)
+  }
+  // 3.复用，只需更新props
+  else if (effectTag === 'UPDATE' && dom !== null) {
+    // 更新
+    updateDom(dom, alternate.props, props)
+  }
   commitWork(fiber.child)
   commitWork(fiber.sibling)
 }
@@ -37,6 +105,7 @@ function render(element, container) {
     },
     alternate: currRoot, //保存旧fiber树
   }
+  deletions = []
   nextUnitOfWork = wipRoot
 }
 
@@ -61,37 +130,64 @@ function workLoop(deadline) {
   //准备下一轮空闲时间执行任务
   requestIdleCallback(workLoop)
 }
-
-// 渲染任务纤维化，拆分为一个个的工作单元
 /**
- * TODO add dom node 渲染当前fiber
- * TODO create new fibers 为 childs 纤维化
- * TODO return next unit of work 查找下一个任务 fiber
- * @param {} fiber //当前处理的任务单元
- * @returns 下一次处理的任务单元
+ * 将旧纤维与新元素相协调,同时迭代旧光纤 (wipFiber.alternate) 的子级和我们想要协调的元素数组。
+ * 节点纤维化，节点间建立联系，用于 初始纤维化 + 更新
+ * 建立连接的节点：Fiber节点、Fiber节点的所有childrens
+ * @param {*} wipFiber Fiber节点
+ * @param {*} elements Fiber节点的childrens
  */
-function performUnitOfWork(fiber) {
-  // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
-  if (!fiber.dom) fiber.dom = createDom(fiber)
-  // // 当前fiber容器 挂载至 父fiber容器中
-  // 每次我们处理一个元素时，我们都会向 DOM 添加一个新节点。并且，请记住，在我们完成整个树的渲染之前，浏览器可能会中断我们的工作。在这种情况下，用户将看到不完整的 UI。我们不希望这样。因此需要删除👇行改变dom的操作
-  // if (fiber.parent) fiber.parent.dom.appendChild(fiber.dom)
-  // 为下🟥一层每个children创建一个新的纤维
-  const elements = fiber.props.children
+function reconcileChildren(wipFiber, elements) {
   let index = 0
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child
   let prevSibling = null
-  while (index < elements.length) {
+  // 新旧vnode对比：同时迭代旧光纤 (wipFiber.alternate) 的子级和我们想要协调的元素数组。
+  //  ❓|| oldFiber !== null 此次更新需要删除节点的情况
+  while (index < elements.length || oldFiber !== null) {
+    // 新vnode  ->  element
+    // 旧vnode  ->  fiber     💡旧vnode的dom已经被渲染，而新vnode的dom还未渲染
     const element = elements[index]
-    const newFiber = {
-      type: element.type,
-      props: element.props,
-      parent: fiber,
-      dom: null,
+    let newFiber = null
+    // 新旧vnode元素类型对比
+    const sameType = oldFiber && element && element.type === oldFiber.type
+    // 相同元素类型：复用元素并更新props
+    if (sameType) {
+      // TODO update the node
+      newFiber = {
+        type: oldFiber.type,
+        props: element.props,
+        dom: oldFiber.dom,
+        parent: wipFiber,
+        alternate: oldFiber,
+        effectTag: 'UPDATE',
+      }
+    }
+    // 不同元素类型：创建新元素
+    if (element && !sameType) {
+      // TODO add this node
+      newFiber = {
+        type: element.type,
+        props: element.props,
+        dom: null, //还未被渲染，等轮到该节点的单元任务执行时，才会被徐娜然
+        parent: wipFiber,
+        alternate: null, //此节点无法被复用，也就是说新旧vnode在此节点以后完全不同，因此与之匹配的旧Fiber为null
+        effectTag: 'PLACEMENT',
+      }
+    }
+    // 不同元素类型：删除旧元素
+    if (oldFiber && !sameType) {
+      // TODO delete the oldFiber's node
+      oldFiber.effectTag = 'DELETION'
+      deletions.push(oldFiber)
+    }
+
+    if (oldFiber) {
+      oldFiber = oldFiber.sibling
     }
     // 将它添加到 Fiber 树中，将其设置为子级或兄弟级，具体取决于它是否是第一个子级
     if (index === 0) {
       // fiber指向到第一个child
-      fiber.child = newFiber
+      wipFiber.child = newFiber
     } else {
       // 后续兄弟形成一个链表:
       //   fiber
@@ -103,6 +199,25 @@ function performUnitOfWork(fiber) {
     prevSibling = newFiber
     index++
   }
+}
+
+/**
+ * 渲染任务纤维化，将Vnode拆分为一个个的工作单元，即当前节点（对应一个fiber）会创建真实Dom，并建立联系
+ * TODO add dom node 渲染当前fiber
+ * TODO create new fibers 为 childs 纤维化
+ * TODO return next unit of work 查找下一个任务 fiber
+ * @param {} fiber //当前处理的任务单元
+ * @returns 下一次处理的任务单元
+ */
+function performUnitOfWork(fiber) {
+  // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
+  if (!fiber.dom) fiber.dom = createDom(fiber)
+
+  const elements = fiber.props.children
+
+  // 单独处理纤维化的工作
+  reconcileChildren(fiber, elements)
+
   // 最后我们寻找下一个工作单元。
   // 下一个任务单元查找规则：🟥子  => 兄 => 叔(父的兄) => 父的父的兄 => ....  => 父的父的....父的兄 / root (逐层往上查找祖先的兄，最终查找到 祖先的兄 或 root ，若到达了root表示渲染结束)
   if (fiber.child) {
@@ -218,7 +333,7 @@ const element = (
       style={{ border: '2px dashed black' }}
     >
       第一层children1
-      <div
+      {/* <div
         className="child1-1"
         style={{ color: 'red', fontWeight: '700', border: '1px solid red' }}
       >
@@ -232,7 +347,7 @@ const element = (
         style={{ color: 'green', border: '1px solid green' }}
       >
         第二层children2
-      </div>
+      </div> */}
     </div>
   </div>
 )
