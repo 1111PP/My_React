@@ -8,25 +8,21 @@
   部分提交节点，可通过reset --hard <hash>回退版本
 ```
 commit 74d79c14996ba4c36a5cd057216787bac2e3c07d (HEAD -> master, origin/master)
-Author: 1111PP <1156912249@qq.com>
 Date:   Sat Oct 12 16:22:07 2024 +0800
 
     No.end : 实现useState
 
 commit 6c19d4fb3da6279599eaaab4ae4de3f881ac504b
-Author: 1111PP <1156912249@qq.com>
 Date:   Fri Oct 11 18:30:40 2024 +0800
 
     No.7：处理函数组件：挂载+更新
 
 commit b3ba9a95dd5b58da86353c30cb5998b7e677e66a
-Author: 1111PP <1156912249@qq.com>
 Date:   Fri Oct 11 17:11:40 2024 +0800
 
     No.6 重构：创建Fiber   新增：更新Fiber
 
 commit 3c0ac31687c45c265b7af7f8faba90cc509f4eb7
-Author: 1111PP <1156912249@qq.com>
 Date:   Fri Oct 11 11:51:35 2024 +0800
 
     No.5:渲染与提交1
