@@ -5,7 +5,7 @@
 
 ## git log
 ```
-部分提交节点，可通过reset --hard <hash>回退版本
+部分提交节点，可通过reset --hard <hash>回退版本查看与调试
 ```
 commit 74d79c14996ba4c36a5cd057216787bac2e3c07d (HEAD -> master, origin/master)
 Date:   Sat Oct 12 16:22:07 2024 +0800
