@@ -30,7 +30,7 @@ Date:   Fri Oct 11 11:51:35 2024 +0800
     
 ## 搭建Babel环境
 
-是的，Babel 可以通过编译将 JSX 转化为 JavaScript 对象的形式，以描述虚拟 DOM 结构。实际上，Babel 自带的 JSX 转换插件会将 JSX 语法转化为 `React.createElement` 调用，这就是你在手动实现的虚拟 DOM 结构和 React 的实际运行机制之间的联系。
+  Babel 可以通过编译将 JSX 转化为 JavaScript 对象的形式，以描述虚拟 DOM 结构。Babel 自带的 JSX 转换插件会将 JSX 语法转化为 `React.createElement` 调用，可供查看自定义与Babel实现的createElement之间的区别
 
 ### Babel JSX 转换原理：
 
