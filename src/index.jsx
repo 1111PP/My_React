@@ -15,7 +15,7 @@ const exceptProperty = (key) => key !== 'children' && !isEvent(key)
 const isNew = (prev, next) => (key) => prev[key] !== next[key]
 // ❗属性 key 同时存在与 prev 和 next 时 返回 false
 const isDiff = (prev, next) => (key) => !(key in next)
-const isEvent = (key) => key.startWith('on')
+const isEvent = (key) => key.startsWith('on')
 
 /**
  * 更新当前节点的属性，包含arrtiubte、children
@@ -35,7 +35,7 @@ function updateDom(dom, oldProps, newProps) {
       // 移除这些废弃的事件
       const eventName = name.toLowerCase().substring(2)
       dom.removeEventListener(eventName, oldProps[name])
-    })
+    }) //
   // 为dom新增事件
   Object.keys(newProps)
     .filter(isEvent)
@@ -43,7 +43,7 @@ function updateDom(dom, oldProps, newProps) {
     .forEach((name) => {
       // 新增的事件
       const eventName = name.toLowerCase().substring(2)
-      dom.addEventListener(eventName, oldProps[name])
+      dom.addEventListener(eventName, newProps[name])
     })
   // -------------------------------普通属性-------------------------------
   // 为 Dom 删除（置空） oldProps 与 newProps 中的不同属性
@@ -60,8 +60,6 @@ function updateDom(dom, oldProps, newProps) {
 }
 // 在 vnode纤维化完成后 执行此操作。这里递归地将所有节点追加到 dom 中。
 function commitRoot() {
-  console.log('🈯fiber树', wipRoot)
-
   // 批量删除节点
   deletions.forEach(commitWork)
   // 从Fiber树中根容器#root的child开始处理
@@ -82,20 +80,21 @@ function commitWork(fiber) {
   }
   // 将具有DOM节点的fiber 赋值给 负责被挂载的parentDOM容器上
   const parentDOM = parentDomFiber.dom
-  const { effectTag, dom, props, alternate } = fiber
+  // const { effectTag, dom, props, alternate } = fiber
   // 1.初次挂载 / 新增
-  if (effectTag === 'PLACEMENT' && dom !== null) {
+  if (fiber.effectTag === 'PLACEMENT' && fiber.dom !== null) {
     parentDOM.appendChild(fiber.dom)
   }
-  // 2.删除
-  else if (effectTag === 'DELETION') {
-    commitDeletion(fiber.dom, parentDOM)
-  }
-  // 3.复用，只需更新props
-  else if (effectTag === 'UPDATE' && dom !== null) {
+  // 2.复用，只需更新props
+  else if (fiber.effectTag === 'UPDATE' && fiber.dom !== null) {
     // 更新
-    updateDom(dom, alternate.props, props)
+    updateDom(fiber.dom, fiber.alternate.props, fiber.props)
   }
+  // 3.删除
+  else if (fiber.effectTag === 'DELETION') {
+    commitDeletion(fiber, parentDOM)
+  }
+
   commitWork(fiber.child)
   commitWork(fiber.sibling)
 }
@@ -132,9 +131,8 @@ function workLoop(deadline) {
     //  处理当前任务单元
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
     //判断是否存在空闲时间
-    shouldYield = deadline.timeRemaining() > 1
+    shouldYield = deadline.timeRemaining() < 1
   }
-
   // 🈯2.挂载任务
   //一旦完成了所有工作, 没有下一个工作单元performUnitOfWork返回undefined,于是 nextUnitOfWork = undefined, 就将整个 Fiber 树提交给 DOM。
   if (!nextUnitOfWork && wipRoot) {
@@ -144,6 +142,8 @@ function workLoop(deadline) {
   //准备下一轮空闲时间执行任务
   requestIdleCallback(workLoop)
 }
+// 空闲时开始执行细分任务,渲染 + 挂载
+requestIdleCallback(workLoop)
 /**
  * 将旧纤维与新元素相协调,同时迭代旧光纤 (wipFiber.alternate) 的子级和我们想要协调的元素数组。
  * 节点纤维化，节点间建立联系，用于 初始纤维化 + 更新
@@ -156,8 +156,9 @@ function reconcileChildren(wipFiber, elements) {
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child
   let prevSibling = null
   // 新旧vnode对比：同时迭代旧光纤 (wipFiber.alternate) 的子级和我们想要协调的元素数组。
-  //  ❓|| oldFiber !== null 此次更新需要删除节点的情况
-  while (index < elements.length || oldFiber !== null) {
+  //  ❓|| oldFiber 此次更新需要删除节点的情况,那么么 oldFiber 不会为 null, 但是 elements[index] 会为 null
+  while (index < elements.length || oldFiber) {
+    // console.log('✨✨✨', oldFiber)
     // 新vnode  ->  element
     // 旧vnode  ->  fiber     💡旧vnode的dom已经被渲染，而新vnode的dom还未渲染
     const element = elements[index]
@@ -202,7 +203,7 @@ function reconcileChildren(wipFiber, elements) {
     if (index === 0) {
       // fiber指向到第一个child
       wipFiber.child = newFiber
-    } else {
+    } else if (element) {
       // 后续兄弟形成一个链表:
       //   fiber
       //     ↓
@@ -215,6 +216,77 @@ function reconcileChildren(wipFiber, elements) {
   }
 }
 
+let wipFiber = null
+let hookIndex = null
+// 函数组件： 渲染 + 纤维化
+const updateFunctionComponent = (fiber) => {
+  wipFiber = fiber
+  hookIndex = 0 //跟踪当前的hook索引
+  wipFiber.hooks = [] //在同一组件中多次调用 useState,保存至数组，并用hookIndex索引对应的钩子
+  // 运行函数组件，获取当前函数组件 return 的 children
+  const children = [fiber.type(fiber.props)]
+
+  // 单独处理纤维化的工作
+  reconcileChildren(fiber, children)
+}
+function useState(initial) {
+  // 获取上一次旧的hook
+  //     通过 wipFiber.alternate来获取上一次的旧 Fiber 节点，如果存在 alternate，进一步检查旧的hook数组是否存在，并通过 hookIndex 来定位当前的钩子
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex]
+  //如果找到旧钩子，那么就复用它的 state，否则使用 initial 来初始化新状态。
+  const hook = {
+    state: oldHook ? oldHook.state : initial, //状态
+    queue: [],
+  }
+  const actionQueue = oldHook ? oldHook.queue : [] //更新队列
+  console.log(actionQueue)
+  actionQueue.forEach((action) => {
+    //  hook.state = action instanceof Function ? action(hook.state) : action
+    //  https://react.docschina.org/learn/queueing-a-series-of-state-updates
+    //  setState(x) 这种情况相当于是 setState((n) => x)
+    //  setState(n=>n+1) 状态更新函数
+    if (!(action instanceof Function)) {
+      let updateState = action
+      action = () => updateState
+    }
+    let result = action(hook.state)
+    //更新state
+    hook.state = result
+  })
+
+  const setState = (action) => {
+    hook.queue.push(action)
+    console.log('old Fiber', currRoot)
+    // 添加任务，会自动在空闲事件执行，达到自动更新渲染的效果
+    wipRoot = {
+      dom: currRoot.dom,
+      props: currRoot.props,
+      alternate: currRoot,
+    }
+    // console.log('new Fiber', wipRoot)
+    nextUnitOfWork = wipRoot
+    deletions = []
+  }
+  //将新Fiber节点的 新hook 添加至新的hook数组
+  wipFiber.hooks.push(hook)
+  //更新hook索引
+  hookIndex++
+  //返回 状态 + 更新状态函数
+  return [hook.state, setState]
+}
+
+// 普通元素： 渲染 + 纤维化
+const updateHostComponent = (fiber) => {
+  // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
+  if (!fiber.dom) fiber.dom = createDom(fiber)
+
+  // 单独处理纤维化的工作
+  reconcileChildren(fiber, fiber.props.children)
+}
+
 /**
  * 渲染任务纤维化，将Vnode拆分为一个个的工作单元，即当前节点（对应一个fiber）会创建真实Dom，并建立联系
  * TODO add dom node 渲染当前fiber
@@ -224,24 +296,6 @@ function reconcileChildren(wipFiber, elements) {
  * @returns 下一次处理的任务单元
  */
 function performUnitOfWork(fiber) {
-  // 函数组件： 渲染 + 纤维化
-  const updateFunctionComponent = (fiber) => {
-    // 运行函数组件，获取当前函数组件 return 的 children
-    const children = [fiber.type(fiber.props)]
-
-    // 单独处理纤维化的工作
-    reconcileChildren(fiber, children)
-  }
-
-  // 普通元素： 渲染 + 纤维化
-  const updateHostComponent = (fiber) => {
-    // 创建一个新节点并将其附加到 DOM, Fiber.dom 属性中跟踪 DOM 节点
-    if (!fiber.dom) fiber.dom = createDom(fiber)
-
-    // 单独处理纤维化的工作
-    reconcileChildren(fiber, fiber.props.children)
-  }
-
   // 对当前 fiber 渲染+纤维化 操作
   const isFunctionComponent = fiber.type instanceof Function
   if (isFunctionComponent) {
@@ -281,7 +335,7 @@ function createElement(type, props, ...children) {
     props: {
       ...props,
       children: children.map((child) =>
-        typeof child === 'object' ? child : MyReact.createTextElement(child)
+        typeof child === 'object' ? child : createTextElement(child)
       ),
     },
   }
@@ -297,8 +351,12 @@ function createDom(fiber) {
     fiber.type === 'TEXT_ELEMENT'
       ? document.createTextNode('')
       : document.createElement(fiber.type)
+
   // 为 DOM 节点设置属性
-  MyReact.handleAttributes(dom, fiber.props)
+  // MyReact.handleAttributes(dom, fiber.props)
+
+  // 初始挂载：为每个fiber节点进行挂载
+  updateDom(dom, {}, fiber.props)
 
   return dom
 }
@@ -351,19 +409,43 @@ let MyReact = {
   createTextElement,
   handleAttributes,
   handleStyle,
+  useState,
+}
+/**@jsx MyReact.createElement */
+function Child(props) {
+  console.log(props)
+  let { onClick } = props
+
+  return (
+    <div
+      onClick={() => {
+        console.log('child')
+        // debugger
+        onClick()
+      }}
+    >
+      Child
+    </div>
+  )
 }
 // babel会使用我们自定义的createElement编译这段jsx代码,转化为Vnode对象
 /**@jsx MyReact.createElement */
-function App(props) {
-  return <h1>Hi {props.name}</h1>
+function App() {
+  const [state, setState] = MyReact.useState(1)
+  const add = () => setState(state + 1)
+  return (
+    <div>
+      <button onClick={() => setState((c) => c + 1)}>Count: {state}</button>
+      <Child onClick={add}></Child>
+    </div>
+  )
 }
-const element = <App name="foo" />
+
+const element = <App />
 
 const container = document.getElementById('root')
 // 渲染的开始 ,实际上是创建第一个细分任务
 MyReact.render(element, container)
-// 空闲时开始执行细分任务,渲染 + 挂载
-requestIdleCallback(workLoop)
 
 // console.log(nextUnitOfWork)
 
