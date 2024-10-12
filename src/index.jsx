@@ -10,7 +10,9 @@ let deletions = null
 // 排除的属性
 //    1.children属性，他们为子元素，单独处理
 //    2.event 事件处理，以on开头的属性
-const exceptProperty = (key) => key !== 'children' && !isEvent(key)
+//    3.style 样式
+const exceptProperty = (key) =>
+  key !== 'children' && !isEvent(key) && key !== 'style'
 // 是否为 新/更改 的属性
 const isNew = (prev, next) => (key) => prev[key] !== next[key]
 // ❗属性 key 同时存在与 prev 和 next 时 返回 false
@@ -57,6 +59,10 @@ function updateDom(dom, oldProps, newProps) {
     .filter(exceptProperty)
     .filter(isNew(oldProps, newProps)) // 过滤 新增 / 修改 过的属性
     .forEach((key) => (dom[key] = newProps[key]))
+
+  // -----------------------------行内样式属性------------------------------
+  const styleObj = newProps.style || {}
+  Object.keys(styleObj).forEach((key) => (dom.style[key] = styleObj[key]))
 }
 // 在 vnode纤维化完成后 执行此操作。这里递归地将所有节点追加到 dom 中。
 function commitRoot() {
@@ -93,6 +99,7 @@ function commitWork(fiber) {
   // 3.删除
   else if (fiber.effectTag === 'DELETION') {
     commitDeletion(fiber, parentDOM)
+    return //若没有return,会重复删除子元素，并会抛出异常 //https://github.com/pomber/didact/issues/30
   }
 
   commitWork(fiber.child)
@@ -230,20 +237,23 @@ const updateFunctionComponent = (fiber) => {
   reconcileChildren(fiber, children)
 }
 function useState(initial) {
-  // 获取上一次旧的hook
+  // 获取上一次旧的hook,尝试复用hook
   //     通过 wipFiber.alternate来获取上一次的旧 Fiber 节点，如果存在 alternate，进一步检查旧的hook数组是否存在，并通过 hookIndex 来定位当前的钩子
   const oldHook =
     wipFiber.alternate &&
     wipFiber.alternate.hooks &&
     wipFiber.alternate.hooks[hookIndex]
+  console.log('useState', oldHook)
+
   //如果找到旧钩子，那么就复用它的 state，否则使用 initial 来初始化新状态。
   const hook = {
     state: oldHook ? oldHook.state : initial, //状态
-    queue: [],
+    queue: [], // 更新队列: 上一轮的setState集合
   }
   const actionQueue = oldHook ? oldHook.queue : [] //更新队列
-  console.log(actionQueue)
+  // console.log(actionQueue)
   actionQueue.forEach((action) => {
+    // debugger
     //  hook.state = action instanceof Function ? action(hook.state) : action
     //  https://react.docschina.org/learn/queueing-a-series-of-state-updates
     //  setState(x) 这种情况相当于是 setState((n) => x)
@@ -400,7 +410,7 @@ function createTextElement(text) {
     },
   }
 }
-
+function useEffect() {}
 let MyReact = {
   createDom,
   createElement,
@@ -432,17 +442,21 @@ function Child(props) {
 /**@jsx MyReact.createElement */
 function App() {
   const [state, setState] = MyReact.useState(1)
+  const [a, setA] = MyReact.useState(1)
   const add = () => setState(state + 1)
+  const func = () => {
+    setState((c) => c + 1)
+    add()
+  }
   return (
     <div>
-      <button onClick={() => setState((c) => c + 1)}>Count: {state}</button>
+      <button onClick={func}>Count: {state}</button>
       <Child onClick={add}></Child>
     </div>
   )
 }
-
+/** @jsx MyReact.createElement */
 const element = <App />
-
 const container = document.getElementById('root')
 // 渲染的开始 ,实际上是创建第一个细分任务
 MyReact.render(element, container)
